@@ -250,9 +250,6 @@ local function acquireLock(params: AcquireLockParams): Promise.TPromise<LockHand
 			logger:log("trace", "cancelled refreshPromise")
 		end
 
-		if params.storeContext.useDSSLocking then
-		end
-
 		-- Check if the lock is likely still valid in MemoryStore before trying to clear it.
 		local isLikelyAcquiredRemotely = lastConfirmedExpiry and lastConfirmedExpiry > os.clock()
 		if isLikelyAcquiredRemotely then
