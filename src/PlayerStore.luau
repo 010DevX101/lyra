@@ -111,7 +111,7 @@ type PlayerStoreProps<T> = {
 
 	@within PlayerStore
 ]=]
-type PlayerStoreConfig<T> = {
+export type PlayerStoreConfig<T> = {
 	name: string,
 	template: T,
 	useDSSLocking: boolean?,
@@ -124,7 +124,7 @@ type PlayerStoreConfig<T> = {
 	dataStoreService: DataStoreService?,
 }
 
-type PlayerStore<T> = typeof(setmetatable({} :: PlayerStoreProps<T>, {} :: PlayerStoreImpl<T>))
+export type PlayerStore<T> = typeof(setmetatable({} :: PlayerStoreProps<T>, {} :: PlayerStoreImpl<T>))
 
 local function getUserIdKey(player: Player): string
 	return tostring(player.UserId)
@@ -193,10 +193,15 @@ end
 	@private
 ]=]
 function PlayerStore:_kickPlayer(keyOrPlayer: string | Player, message: string): ()
-	if typeof(keyOrPlayer) ~= "string" then
+    if typeof(keyOrPlayer) ~= "string" then
 		keyOrPlayer:Kick(message)
 	else
-		local player = Players:GetPlayerByUserId(tonumber(keyOrPlayer))
+        local id = tonumber(keyOrPlayer)
+        if id == nil then
+            warn(`Could not convert id {keyOrPlayer} to number`)
+            return
+        end
+		local player = Players:GetPlayerByUserId(id)
 		if player ~= nil then
 			player:Kick(message)
 		end
@@ -394,7 +399,7 @@ function PlayerStore:tx<T>(
 	players: { Player },
 	transformFunction: (state: { [Player]: T }) -> boolean
 ): Promise.TPromise<boolean>
-	local userIdKeys = table.create(#players)
+	local userIdKeys = table.create(#players) :: {string}
 	local userIdKeyToPlayer = {}
 	for i, player in players do
 		local key = getUserIdKey(player)
@@ -435,7 +440,7 @@ end
 	See [PlayerStore:tx]
 	@yields
 ]=]
-function PlayerStore:txAsync<T>(players: { Player }, transformFunction: (state: { [Player]: T }) -> boolean)
+function PlayerStore:txAsync<T>(players: { Player }, transformFunction: (state: { [Player]: T }) -> boolean): boolean
 	return self:tx(players, transformFunction):expect()
 end
 
@@ -466,7 +471,7 @@ function PlayerStore:txImmutable<T>(
 	players: { Player },
 	transformFunction: (state: { [Player]: T }) -> { [Player]: T } | false
 ): Promise.TPromise<boolean>
-	local userIdKeys = table.create(#players)
+	local userIdKeys = table.create(#players) :: {string}
 	local userIdKeyToPlayer = {}
 	for i, player in players do
 		local key = getUserIdKey(player)

@@ -3,7 +3,7 @@ local HttpService = game:GetService("HttpService")
 local Tables = require(script.Parent.Tables)
 
 local MAX_QUEUE_SIZE = 30
-local RATE_LIMITS = {
+local RATE_LIMITS: RateLimits = {
 	GetAsync = { Base = 60, PlayerMultiplier = 10 },
 	SetAsync = { Base = 60, PlayerMultiplier = 10 },
 	UpdateAsync = { Base = 60, PlayerMultiplier = 10 },
@@ -11,12 +11,103 @@ local RATE_LIMITS = {
 	GetVersion = { Base = 5, PlayerMultiplier = 2 },
 }
 
+type MockDataStoreService = {
+    dataStores: {[string]: MockDataStore},
+	mockData: {[string]: {[string]: any}},
+	mockKeyInfo: {[string]: MockKeyInfo},
+	mockVersions: {
+        [string]: { MockVersion }
+    },
+	mockCache: {[string]: {
+        value: any,
+        keyInfo: MockKeyInfo,
+        timestamp: number
+    }},
+	requestQueues: {
+        [RequestType]: {(() -> ()) | boolean}
+	},
+	queuedErrors: {
+		[RequestType]: {string},
+	},
+	mockStoreMeta: MockStoreMeta,
+	_globalLatency: number?,
+	_latencyByRequestType: {[RequestType]: number},
+	_randomLatencyRange: {min: number, max: number}?,
+	_errorRates: {[RequestType]: number},
+	_simulateThrottling: boolean,
+	_simulateTimeout: boolean,
+	_customBudgets: {[RequestType]: number},
+	_forcedThrottles: {
+        [RequestType]: {
+            endTime: number
+        }
+    },
+
+    GetDataStore: (self: MockDataStoreService, datastoreName: string, scope: string?) -> (MockDataStore),
+    GetRequestBudgetForRequestType: (self: MockDataStoreService, requestType: Enum.DataStoreRequestType) -> (number)
+}
+
+type MockDataStore = setmetatable<{
+    datastoreName: string,
+    scope: string,
+    _service: MockDataStoreService
+}, MockStoreMeta>
+
+type MockStoreMeta = {
+    GetAsync: (self: MockDataStore, key: string, options: DataStoreGetOptions) -> (any, MockKeyInfo),
+    SetAsync: (self: MockDataStore, key: string, value: any, userIds: {number}, options: DataStoreSetOptions) -> string,
+    UpdateAsync: (self: MockDataStore, key: string, transformFunction: (value: any, keyInfo: DataStoreKeyInfo) -> (any, {number}, {[string]: any})) -> (...any),
+    RemoveAsync: (self: MockDataStore, key: string) -> (any, MockKeyInfo),
+    ListVersionsAsync: (self: MockDataStore, key: string, sortDirection: Enum.SortDirection, minDate: number, maxDate: number, pageSize: number) -> MockDataStoreVersionPages,
+    GetVersionAsync: (self: MockDataStore, key: string, version: string) -> (any, MockKeyInfo?),
+
+    __index: MockStoreMeta
+}
+
+type MockDataStoreVersionPages = {
+    IsFinished: boolean,
+    GetCurrentPage: () -> {MockResult}
+}
+
+type MockResult = {
+    CreatedTime: number,
+    Version: string
+}
+
+type MockVersion = {
+    Value: any,
+	UserIds: {number},
+	Metadata: {[string]: any},
+	CreatedTime: number,
+	Version: string,
+}
+
+type MockKeyInfo = {
+    CreatedTime: number,
+	UpdatedTime: number,
+	Version: string,
+	userIds: {number},
+	metadata: {[string]: any},
+
+	GetUserIds: (self: MockKeyInfo) -> {number},
+	GetMetadata: (self: MockKeyInfo) -> {[string]: any}
+}
+
+type RequestType = keyof<typeof(RATE_LIMITS)>
+
+type RateLimits = {
+    [string]: {
+        Base: number,
+        PlayerMultiplier: number
+    }
+}
+
 local MAX_KEY_LENGTH = 50
 local MAX_DATA_SIZE = 4_194_304
 local MAX_METADATA_SIZE = 300
 local CACHE_DURATION = 4
 
-local function getLatencyForRequest(service: any, requestType: string): number
+local function getLatencyForRequest(service: MockDataStoreService, requestType: RequestType): number
 	if service._latencyByRequestType[requestType] then
 		return service._latencyByRequestType[requestType]
 	end
@@ -30,7 +121,7 @@ local function getLatencyForRequest(service: any, requestType: string): number
 	return service._globalLatency or 0.1
 end
 
-local function shouldSimulateError(service: any, requestType: string): (boolean, string?)
+local function shouldSimulateError(service: MockDataStoreService, requestType: RequestType): (boolean, string?)
 	if #service.queuedErrors[requestType] > 0 then
 		return true, table.remove(service.queuedErrors[requestType], 1)
 	end
@@ -50,7 +141,7 @@ local function shouldSimulateError(service: any, requestType: string): (boolean,
 	return false, nil
 end
 
-local function doLatency(service: any, requestType: string)
+local function doLatency(service: MockDataStoreService, requestType: RequestType)
 	local latency = getLatencyForRequest(service, requestType)
 	if latency > 0 then
 		task.wait(latency)
@@ -69,18 +160,18 @@ local function getUtcHour()
 	return msToHours(getNow())
 end
 
-local function createVersion(value: any, userIds: any, metadata: any)
+local function createVersion(value: any, userIds: {number}?, metadata: any?): MockVersion
 	return {
 		Value = value,
 		UserIds = userIds or {},
 		Metadata = metadata or {},
 		CreatedTime = getNow(),
-		Version = tostring(getNow()),
+		Version = tostring(getNow())
 	}
 end
 
-local function createMockKeyInfo(userIds: any, metadata: any)
-	local info = {
+local function createMockKeyInfo(userIds: {number}?, metadata: any?): MockKeyInfo
+	local info: MockKeyInfo = {
 		CreatedTime = getNow(),
 		UpdatedTime = getNow(),
 		Version = tostring(getNow()),
@@ -111,7 +202,7 @@ local function validateMetadata(metadata: any)
 	end
 end
 
-local function getScopedData(self: any)
+local function getScopedData(self: MockDataStore): {[string]: any}
 	local datastore = self._service.mockData[self.datastoreName]
 	if not datastore then
 		datastore = {}
@@ -127,7 +218,7 @@ local function getScopedData(self: any)
 	return scopedData
 end
 
-local function getVersionsForKey(self: any, key: string)
+local function getVersionsForKey(self: MockDataStore, key: string)
 	local versionKey = `{self.datastoreName}|{self.scope}|{key}`
 	if not self._service.mockVersions[versionKey] then
 		self._service.mockVersions[versionKey] = {}
@@ -135,11 +226,11 @@ local function getVersionsForKey(self: any, key: string)
 	return self._service.mockVersions[versionKey]
 end
 
-local function getCacheKey(self: any, key: string)
+local function getCacheKey(self: MockDataStore, key: string)
 	return `{self.datastoreName}|{self.scope}|{key}`
 end
 
-local function getCachedValue(self: any, key: string)
+local function getCachedValue(self: MockDataStore, key: string)
 	local cacheKey = getCacheKey(self, key)
 	local cached = self._service.mockCache[cacheKey]
 	if cached and (os.time() - cached.timestamp) < CACHE_DURATION then
@@ -148,7 +239,7 @@ local function getCachedValue(self: any, key: string)
 	return nil, nil :: any
 end
 
-local function setCachedValue(self: any, key: string, value: any, keyInfo: any)
+local function setCachedValue(self: MockDataStore, key: string, value: any, keyInfo: MockKeyInfo)
 	local cacheKey = getCacheKey(self, key)
 	self._service.mockCache[cacheKey] = {
 		value = value,
@@ -157,7 +248,7 @@ local function setCachedValue(self: any, key: string, value: any, keyInfo: any)
 	}
 end
 
-local function enforceKeyLimits(key: any)
+local function enforceKeyLimits(key: string)
 	if typeof(key) ~= "string" then
 		error("DataStoreService: Key must be a string", 0)
 	end
@@ -188,7 +279,7 @@ local function enforceDataLimits(value: any)
 	end
 end
 
-local function doRateLimitAndQueue(self: any, requestType: string)
+local function doRateLimitAndQueue(self: MockDataStore, requestType: RequestType): boolean
 	local queue = self._service.requestQueues[requestType]
 	local limitData = RATE_LIMITS[requestType]
 	if not limitData then
@@ -241,9 +332,9 @@ local function sanitize(value: any)
 	return Tables.copyDeep(value)
 end
 
-local MockDataStore = {}
+local MockDataStore = {} :: MockDataStore
 
-function MockDataStore:SetAsync(key, value, userIds, options)
+function MockDataStore.SetAsync(self: MockDataStore, key: string, value: any, userIds: {number}, options: {[string]: any}): string
 	value = sanitize(value)
 	enforceKeyLimits(key)
 	enforceDataLimits(value)
@@ -280,7 +371,7 @@ function MockDataStore:SetAsync(key, value, userIds, options)
 	return latestVersion
 end
 
-function MockDataStore:GetAsync(key, options)
+function MockDataStore.GetAsync(self: MockDataStore, key: string, options: { [string]: any }): (any, MockKeyInfo)
 	enforceKeyLimits(key)
 
 	if options == nil or options.UseCache == true then
@@ -303,7 +394,7 @@ function MockDataStore:GetAsync(key, options)
 	return data, keyInfo
 end
 
-function MockDataStore:UpdateAsync(key, transformFunction)
+function MockDataStore.UpdateAsync(self: MockDataStore, key: string, transformFunction: (value: any, keyInfo: MockKeyInfo) -> (any, {number}, {[string]: any}))
 	enforceKeyLimits(key)
 
 	doRateLimitAndQueue(self, "UpdateAsync")
@@ -361,7 +452,7 @@ function MockDataStore:UpdateAsync(key, transformFunction)
 	end
 end
 
-function MockDataStore:RemoveAsync(key)
+function MockDataStore.RemoveAsync(self: MockDataStore, key: string): (any, MockKeyInfo)
 	enforceKeyLimits(key)
 
 	doRateLimitAndQueue(self, "RemoveAsync")
@@ -383,7 +474,7 @@ function MockDataStore:RemoveAsync(key)
 	return data, keyInfo
 end
 
-function MockDataStore:GetVersionAsync(key, version)
+function MockDataStore.GetVersionAsync(self: MockDataStore, key: string, version: string): (any, MockKeyInfo?)
 	enforceKeyLimits(key)
 
 	doRateLimitAndQueue(self, "GetVersion")
@@ -394,32 +485,32 @@ function MockDataStore:GetVersionAsync(key, version)
 			return v.Value, createMockKeyInfo(v.UserIds, v.Metadata)
 		end
 	end
-	return nil, nil :: any
+	return nil, nil
 end
 
-function MockDataStore:ListVersionsAsync(key, sortDirection, minDate, maxDate)
+function MockDataStore.ListVersionsAsync(self: MockDataStore, key: string, sortDirection: Enum.SortDirection, minDate: number, maxDate: number): MockDataStoreVersionPages
 	enforceKeyLimits(key)
 
 	doRateLimitAndQueue(self, "GetVersion")
 
 	local versions = getVersionsForKey(self, key)
-	local results = {}
+	local results: {MockResult} = {}
 
 	for _, v in versions do
 		if (not minDate or v.CreatedTime >= minDate) and (not maxDate or v.CreatedTime <= maxDate) then
 			table.insert(results, {
-				Version = v.Version,
-				CreatedTime = v.CreatedTime,
-			})
+                CreatedTime = v.CreatedTime,
+                Version = v.Version
+            })
 		end
 	end
 
 	if sortDirection == Enum.SortDirection.Descending then
-		table.sort(results, function(a, b)
+		table.sort(results, function(a: { CreatedTime: number, Version: string }, b: { CreatedTime: number, Version: string })
 			return a.CreatedTime > b.CreatedTime
 		end)
 	else
-		table.sort(results, function(a, b)
+		table.sort(results, function(a: { CreatedTime: number, Version: string }, b: { CreatedTime: number, Version: string })
 			return a.CreatedTime < b.CreatedTime
 		end)
 	end
@@ -432,51 +523,19 @@ function MockDataStore:ListVersionsAsync(key, sortDirection, minDate, maxDate)
 	}
 end
 
-local function createMockStore(service: any, datastoreName: string, scope: string?)
-	return setmetatable({
-		datastoreName = datastoreName,
-		scope = scope or "global",
-		_service = service,
-	}, service.mockStoreMeta)
+local function createMockStore(service: MockDataStoreService, datastoreName: string, scope: string?): MockDataStore
+    return setmetatable({
+        datastoreName = datastoreName,
+        scope = scope or "global",
+        _service = service
+    }, service.mockStoreMeta)
 end
 
 local function new()
-	local mockStoreMeta = table.clone(MockDataStore)
+	local mockStoreMeta = table.clone(MockDataStore) :: MockStoreMeta
 	mockStoreMeta.__index = mockStoreMeta
 
-	local tbl = {
-		dataStores = {},
-		mockData = {},
-		mockKeyInfo = {},
-		mockVersions = {},
-		mockCache = {},
-		requestQueues = {
-			GetAsync = {},
-			SetAsync = {},
-			UpdateAsync = {},
-			RemoveAsync = {},
-			GetVersion = {},
-		},
-		queuedErrors = {
-			GetAsync = {},
-			SetAsync = {},
-			UpdateAsync = {},
-			RemoveAsync = {},
-			GetVersion = {},
-		},
-		mockStoreMeta = mockStoreMeta,
-
-		_globalLatency = nil,
-		_latencyByRequestType = {},
-		_randomLatencyRange = nil,
-		_errorRates = {},
-		_simulateThrottling = false,
-		_simulateTimeout = false,
-		_customBudgets = {},
-		_forcedThrottles = {},
-	}
-
-	tbl.GetDataStore = function(self, datastoreName: string, scope: string?)
+    local function getDataStore(self: MockDataStoreService, datastoreName: string, scope: string?)
 		local store = self.dataStores[`{datastoreName}{scope or ""}`]
 		if not store then
 			store = createMockStore(self, datastoreName, scope)
@@ -485,7 +544,7 @@ local function new()
 		return store
 	end
 
-	tbl.GetRequestBudgetForRequestType = function(self, requestType: Enum.DataStoreRequestType)
+    local function getRequestBudgetForRequestType(self: MockDataStoreService, requestType: Enum.DataStoreRequestType)
 		local requestTypeStr = requestType.Name
 
 		local queueKey = requestTypeStr
@@ -515,51 +574,90 @@ local function new()
 		return math.max(0, totalBudget - currentQueueSize)
 	end
 
+	local tbl: MockDataStoreService = {
+		dataStores = {},
+		mockData = {},
+		mockKeyInfo = {},
+		mockVersions = {},
+		mockCache = {},
+		requestQueues = {
+			GetAsync = {},
+			SetAsync = {},
+			UpdateAsync = {},
+			RemoveAsync = {},
+			GetVersion = {},
+		},
+		queuedErrors = {
+			GetAsync = {},
+			SetAsync = {},
+			UpdateAsync = {},
+			RemoveAsync = {},
+			GetVersion = {},
+		},
+        
+		mockStoreMeta = mockStoreMeta,
+
+		_globalLatency = nil,
+		_latencyByRequestType = {},
+		_randomLatencyRange = nil,
+		_errorRates = {},
+		_simulateThrottling = false,
+		_simulateTimeout = false,
+		_customBudgets = {},
+		_forcedThrottles = {},
+
+        GetDataStore = getDataStore,
+        GetRequestBudgetForRequestType = getRequestBudgetForRequestType
+	}
+
 	return (tbl :: any) :: DataStoreService
 end
 
 return {
 	new = new,
 
-	mockStoreMethod = function(service, method: string, jest: any)
-		local real = service.mockStoreMeta[method]
+	mockStoreMethod = function(service: MockDataStoreService, method: keyof<MockStoreMeta>, jest: any)
+		local real = rawget(service.mockStoreMeta :: {[string]: any}, method)
+        if typeof(real) ~= "function" then
+            return
+        end
 		local mock, fn = jest.fn(real)
-		service.mockStoreMeta[method] = fn
+		rawset(service.mockStoreMeta :: {[string]: any}, method, fn)
 		return mock, real
 	end,
 
-	setGlobalLatency = function(service: any, seconds: number)
+	setGlobalLatency = function(service: MockDataStoreService, seconds: number)
 		service._globalLatency = seconds
 	end,
-	setLatencyForRequestType = function(service: any, requestType: string, seconds: number)
+	setLatencyForRequestType = function(service: MockDataStoreService, requestType: RequestType, seconds: number)
 		service._latencyByRequestType[requestType] = seconds
 	end,
-	setRandomLatency = function(service: any, minSeconds: number, maxSeconds: number)
+	setRandomLatency = function(service: MockDataStoreService, minSeconds: number, maxSeconds: number)
 		service._randomLatencyRange = { min = minSeconds, max = maxSeconds }
 	end,
-	queueError = function(service: any, requestType: string, errorMessage: string, count: number?)
+	queueError = function(service: MockDataStoreService, requestType: RequestType, errorMessage: string, count: number?)
 		for _ = 1, count or 1 do
 			table.insert(service.queuedErrors[requestType], errorMessage)
 		end
 	end,
-	setErrorRate = function(service: any, requestType: string, rate: number)
+	setErrorRate = function(service: MockDataStoreService, requestType: RequestType, rate: number)
 		service._errorRates[requestType] = rate
 	end,
-	simulateThrottling = function(service: any, enabled: boolean)
+	simulateThrottling = function(service: MockDataStoreService, enabled: boolean)
 		service._simulateThrottling = enabled
 	end,
-	simulateTimeout = function(service: any, enabled: boolean)
+	simulateTimeout = function(service: MockDataStoreService, enabled: boolean)
 		service._simulateTimeout = enabled
 	end,
-	setRequestBudget = function(service: any, requestType: string, budget: number)
+	setRequestBudget = function(service: MockDataStoreService, requestType: RequestType, budget: number)
 		service._customBudgets[requestType] = budget
 	end,
-	forceThrottle = function(service: any, requestType: string, duration: number)
+	forceThrottle = function(service: MockDataStoreService, requestType: RequestType, duration: number)
 		service._forcedThrottles[requestType] = {
 			endTime = os.time() + duration,
 		}
 	end,
-	snapshot = function(service: any)
+	snapshot = function(service: MockDataStoreService)
 		return HttpService:JSONEncode({
 			mockData = service.mockData,
 			mockKeyInfo = service.mockKeyInfo,
@@ -567,7 +665,7 @@ return {
 			mockCache = service.mockCache,
 		})
 	end,
-	restore = function(service: any, snapshot: string)
+	restore = function(service: MockDataStoreService, snapshot: string)
 		local decoded = HttpService:JSONDecode(snapshot)
 		service.mockData = decoded.mockData
 		service.mockKeyInfo = decoded.mockKeyInfo

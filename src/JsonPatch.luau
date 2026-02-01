@@ -322,21 +322,21 @@ local function generate(obj1: any, obj2: any, patches: { Types.PatchOperation },
 						op = "replace",
 						path = path .. "/" .. getZeroBasedKey(key, obj1IsArray),
 						value = Tables.copyDeep(newVal),
-					})
+					} :: Types.PatchOperation)
 				end
 			end
 		elseif obj1IsArray == obj2IsArray then
 			table.insert(patches, {
 				op = "remove",
 				path = path .. "/" .. getZeroBasedKey(key, obj1IsArray),
-			})
+			} :: Types.PatchOperation)
 			deleted = true
 		else
 			table.insert(patches, {
 				op = "replace",
 				path = path,
 				value = obj2,
-			})
+			} :: Types.PatchOperation)
 		end
 	end
 
@@ -355,7 +355,7 @@ local function generate(obj1: any, obj2: any, patches: { Types.PatchOperation },
 						op = "add",
 						path = path .. "/-",
 						value = Tables.copyDeep(obj2[key]),
-					})
+					} :: Types.PatchOperation)
 
 					continue
 				end
@@ -365,7 +365,7 @@ local function generate(obj1: any, obj2: any, patches: { Types.PatchOperation },
 				op = "add",
 				path = path .. "/" .. getZeroBasedKey(key, obj2IsArray),
 				value = Tables.copyDeep(obj2[key]),
-			})
+			} :: Types.PatchOperation)
 		end
 	end
 end

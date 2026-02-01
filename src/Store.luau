@@ -1,6 +1,5 @@
 --[=[
 	@class Store
-	@private
 
 	Coordinates Sessions and provides a safe, high-level API for interacting with
 	persistent data stored in Roblox DataStores and MemoryStores.
@@ -65,7 +64,7 @@ local Tables = require(script.Parent.Tables)
 local Types = require(script.Parent.Types)
 local dataStoreRetry = require(script.Parent.dataStoreRetry)
 local noYield = require(script.Parent.noYield)
-local t = require(script.Parent.Parent.t)
+local gt = require(script.Parent.Parent.GreenTea)
 
 --[=[
 	Configuration options for creating a new Store instance using `createStore`.
@@ -108,22 +107,23 @@ export type StoreConfig<T> = {
 	useDSSLocking: boolean?,
 	useMock: boolean?,
 }
-local storeConfigCheck = t.strictInterface({
-	name = t.string,
-	template = t.any,
-	schema = t.callback,
-	migrationSteps = t.optional(t.array(t.strictInterface({
-		name = t.string,
-		apply = t.callback,
+
+local storeConfigCheck = gt.t.strictInterface({
+	name = gt.t.string,
+	template = gt.t.any,
+	schema = gt.t.callback,
+	migrationSteps = gt.t.optional(gt.t.array(gt.t.strictInterface({
+		name = gt.t.string,
+		apply = gt.t.callback,
 	}))),
-	importLegacyData = t.optional(t.callback),
-	dataStoreService = t.optional(t.any),
-	memoryStoreService = t.optional(t.any),
-	changedCallbacks = t.optional(t.array(t.callback)),
-	logCallback = t.optional(t.callback),
-	onLockLost = t.optional(t.callback),
-	useDSSLocking = t.optional(t.boolean),
-	useMock = t.optional(t.boolean),
+	importLegacyData = gt.t.optional(gt.t.callback),
+	dataStoreService = gt.t.optional(gt.t.any),
+	memoryStoreService = gt.t.optional(gt.t.any),
+	changedCallbacks = gt.t.optional(gt.t.array(gt.t.callback)),
+	logCallback = gt.t.optional(gt.t.callback),
+	onLockLost = gt.t.optional(gt.t.callback),
+	useDSSLocking = gt.t.optional(gt.t.boolean),
+	useMock = gt.t.optional(gt.t.boolean),
 })
 
 -- Parameters for the listVersions method. Mirrors DataStore:ListVersionsAsync parameters.
@@ -139,7 +139,7 @@ type StoreImpl<T> = {
 	__index: StoreImpl<T>,
 
 	-- Internal helper methods
-	_withSession: (self: Store<T>, key: string, callback: (session: Session.Session<any>) -> ()) -> Promise.Promise,
+	_withSession: (self: Store<T>, key: string, callback: (session: Session.Session<any>) -> (Promise.TPromise<any>)) -> Promise.Promise,
 	_getKeyInfo: (self: Store<T>, key: string) -> Promise.TPromise<DataStoreKeyInfo?>,
 
 	-- Core public API (Promise-based)
@@ -201,9 +201,9 @@ type StoreProps<T> = {
 	_unloadPromises: { [string]: Promise.Promise }, -- Tracks ongoing unload operations.
 }
 
-export type Store<T> = typeof(setmetatable({} :: StoreProps<T>, {} :: StoreImpl<T>))
+export type Store<T> = setmetatable<StoreProps<T>, StoreImpl<T>>
 
-local Store: StoreImpl<any> = {} :: StoreImpl<any>
+local Store = {} :: Store<any>
 Store.__index = Store
 
 --[=[
@@ -288,16 +288,16 @@ local function createStore<T>(config: StoreConfig<T>): Store<T>
 		error(`Failed to validate template for store '{config.name}': {err}`)
 	end
 
-	local self = setmetatable({
+    local storeProps: StoreProps<T> = {
 		_ctx = storeContext,
 		_closed = false,
 		_sessions = {},
 		_loadPromises = {},
 		_unloadPromises = {},
-	}, Store)
+    }
 
 	logger:log("trace", `created store`)
-	return self
+	return setmetatable(storeProps, Store) :: Store<T>
 end
 
 --[[
@@ -354,8 +354,8 @@ end
 	@error "Store is closed" -- If the store instance has been closed via `close()`.
 ]=]
 function Store:load(key: string, userIds: { number }?): Promise.Promise
-	assert(t.string(key))
-	assert(t.optional(t.array(t.number))(userIds))
+	assert(gt.t.string(key))
+	assert(gt.t.optional(gt.t.array(gt.t.number))(userIds))
 
 	local logger = self._ctx.logger:extend({ method = "load", key = key })
 	logger:log("trace", "attempting to load key")
@@ -395,7 +395,7 @@ function Store:load(key: string, userIds: { number }?): Promise.Promise
 		userIds = userIds,
 	}
 	-- Chain the actual session loading after the potential unload wait.
-	local loadPromise = waitForUnload:andThenCall(Session.load, sessionLoadParams):andThen(function(session)
+	local loadPromise = waitForUnload:andThenCall(Session.load, sessionLoadParams):andThen(function(session: Session.Session<any>)
 		-- Check if the store was closed *while* this load was in progress.
 		if self._closed then
 			logger:log("warn", "store closed before key loaded, unloading immediately")
@@ -478,7 +478,7 @@ end
 	@error "Store is closed" -- If the store instance has been closed.
 ]=]
 function Store:unload(key: string): Promise.Promise
-	assert(t.string(key))
+	assert(gt.t.string(key))
 
 	local logger = self._ctx.logger:extend({ method = "unload", key = key })
 	logger:log("trace", "attempting to unload key")
@@ -596,12 +596,12 @@ end
 	@within Store
 	@private
 	@param key string -- The key whose info is needed.
-	@return Promise<DataStoreKeyInfo?> -- Resolves with the key info object, or nil if the session doesn't have key info (shouldn't normally happen for loaded sessions). Rejects if the session cannot be accessed.
+	@return TPromise<DataStoreKeyInfo?> -- Resolves with the key info object, or nil if the session doesn't have key info (shouldn't normally happen for loaded sessions). Rejects if the session cannot be accessed.
 ]=]
 function Store:_getKeyInfo(key: string): Promise.TPromise<DataStoreKeyInfo?>
-	return self:_withSession(key, function(session)
+	return self:_withSession(key, function(session: Session.Session<any>): Promise.TPromise<DataStoreKeyInfo?>
 		-- Access the keyInfo property stored on the session object after load.
-		return session.keyInfo
+		return Promise.resolve(session.keyInfo)
 	end)
 end
 
@@ -617,7 +617,7 @@ end
 	@error "Store is closed" -- If the store has been closed.
 ]=]
 function Store:get<T>(key: string): Promise.TPromise<T>
-	assert(t.string(key))
+	assert(gt.t.string(key))
 
 	return self:_withSession(key, function(session)
 		return session:get()
@@ -658,11 +658,11 @@ end
 	@error "Schema validation failed" -- If the data returned by `transformFunction` does not pass the store's schema check.
 ]=]
 function Store:update<T>(key: string, transformFunction: (data: T) -> boolean): Promise.TPromise<boolean>
-	assert(t.string(key))
-	assert(t.callback(transformFunction))
+	assert(gt.t.string(key))
+	assert(gt.t.callback(transformFunction))
 
 	-- Use _withSession to safely access the session and call its update method.
-	return self:_withSession(key, function(session)
+	return self:_withSession(key, function(session: Session.Session<any>)
 		return session:update(transformFunction)
 	end)
 end
@@ -705,8 +705,8 @@ end
 	@error "Schema validation failed" -- If the data returned by `transformFunction` does not pass the store's schema check.
 ]=]
 function Store:updateImmutable<T>(key: string, transformFunction: (data: T) -> T | false): Promise.TPromise<boolean>
-	assert(t.string(key))
-	assert(t.callback(transformFunction))
+	assert(gt.t.string(key))
+	assert(gt.t.callback(transformFunction))
 
 	-- Use _withSession to safely access the session and call its updateImmutable method.
 	return self:_withSession(key, function(session)
@@ -766,10 +766,10 @@ end
 	@error "Schema validation failed" -- If the data for any key after transformation fails the schema check.
 	@error "Keys changed in transaction" -- If the `transformFunction` attempts to add or remove keys from the state table it receives.
 ]=]
-local function txInternal<T>(
-	self: Store<T>,
+local function txInternal<V>(
+	self: Store<V>,
 	keys: { string },
-	transformFunction: ((state: T) -> boolean) | ((state: T) -> T | false),
+	transformFunction: (state: { [string]: V }) -> { [string]: V } | boolean,
 	immutable: boolean
 ): Promise.TPromise<boolean>
 	-- Generate a unique ID for this transaction attempt.
@@ -803,7 +803,7 @@ local function txInternal<T>(
 
 	-- Create a promise that acts as a lock signal for the involved sessions.
 	-- It resolves only when the transaction completes (success or failure).
-	local txLockResolve
+	local txLockResolve: (...any) -> ()
 	local txLockPromise = Promise.new(function(resolve)
 		txLockResolve = resolve
 	end)
@@ -848,14 +848,14 @@ local function txInternal<T>(
 		-- Wrap the core transaction logic with the session tx lock mechanism.
 		return withTxLock(function()
 			-- 1. Get current state from all sessions.
-			local currentState: { [string]: T } = {}
+			local currentState: { [string]: V } = {}
 			for _, key in keys do
 				local session = self._sessions[key]
 				-- Use session.data directly as we hold the queue lock.
-				currentState[key] = session.data :: T
+				currentState[key] = session.data :: V
 			end
 
-			local nextState
+			local nextState: {[string]: V}
 			if immutable then
 				-- If immutable, the transformFunction has to handle
 				-- copy-on-write semantics itself, and we'll pass the current
@@ -870,7 +870,7 @@ local function txInternal<T>(
 
 			-- 2. Execute the user's transform function.
 			-- Use noYield to prevent yielding within the transform function.
-			local transformOk, result = pcall(noYield, transformFunction, nextState :: any)
+			local transformOk, result: {[string]: V} | boolean = pcall(noYield, transformFunction, nextState :: any)
 			if not transformOk then
 				logger:log("error", "tx transformFunction failed", { error = result })
 				return Promise.reject(`Store:tx transformFunction failed: {result}`)
@@ -896,7 +896,7 @@ local function txInternal<T>(
 			end
 
 			if immutable then
-				nextState = result
+				nextState = result :: {[string]: V}
 			end
 
 			-- We freeze the nextState to prevent further modifications.
@@ -983,7 +983,7 @@ local function txInternal<T>(
 			local keyWritePromises = prepareTxPromise:andThen(function()
 				logger:log("trace", "tx status prepared, writing records with TxInfo")
 				-- Create promises for writing each key's record.
-				return Promise.all(Tables.map(keys, function(key)
+				return Promise.all(Tables.map(keys, function(key: string)
 					local txInfo: Types.TxInfo = {
 						txId = txId,
 						txPatch = patches[key],
@@ -999,7 +999,7 @@ local function txInternal<T>(
 
 				-- Attempt to rewrite all records *without* the TxInfo.
 				local cleanupPromises = Tables.map(keys, function(key)
-					local txInfo = { committedData = currentState[key] } -- Revert to pre-tx state reference.
+					local txInfo: Types.TxInfo = { committedData = currentState[key] } -- Revert to pre-tx state reference.
 					return self._sessions[key]:writeRecord(txInfo)
 				end)
 
@@ -1090,8 +1090,8 @@ end
 	@error "Keys changed in transaction" -- If the `transformFunction` attempts to add or remove keys from the state table it receives.
 ]=]
 function Store:tx<T>(keys: { string }, transformFunction: (state: { [string]: T }) -> boolean): Promise.TPromise<boolean>
-	assert(t.array(t.string)(keys))
-	assert(t.callback(transformFunction))
+	assert(gt.t.array(gt.t.string)(keys))
+	assert(gt.t.callback(transformFunction))
 
 	return txInternal(self, keys, transformFunction, false)
 end
@@ -1138,8 +1138,8 @@ function Store:txImmutable<T>(
 	keys: { string },
 	transformFunction: (state: { [string]: T }) -> { [string]: T } | false
 ): Promise.TPromise<boolean>
-	assert(t.array(t.string)(keys))
-	assert(t.callback(transformFunction))
+	assert(gt.t.array(gt.t.string)(keys))
+	assert(gt.t.callback(transformFunction))
 
 	return txInternal(self, keys, transformFunction, true)
 end
@@ -1181,7 +1181,7 @@ end
 	@error "Store is closed" -- If the store instance has been closed.
 ]=]
 function Store:save(key: string): Promise.Promise
-	assert(t.string(key))
+	assert(gt.t.string(key))
 
 	return self:_withSession(key, function(session)
 		return session:save()
@@ -1224,8 +1224,8 @@ function Store:close(): Promise.Promise
 	local rejections = {}
 
 	-- Initiate unload for all currently active sessions.
-	local unloadPromises = {}
-	for key, session in self._sessions do
+	local unloadPromises: {Promise.Promise} = {}
+	for key, _ in self._sessions do
 		if self._unloadPromises[key] then
 			logger:log("trace", "key already being unloaded", { key = key })
 			table.insert(unloadPromises, self._unloadPromises[key])
@@ -1284,7 +1284,7 @@ end
 function Store:peek<T>(key: string): Promise.TPromise<T?>
 	-- 1. Get the main record from the recordStore.
 	return dataStoreRetry(function()
-			return self._ctx.recordStore:GetAsync(key)
+			return self._ctx.recordStore:GetAsync(key) :: any
 		end)
 		:andThen(function(record: Types.DataStoreRecord?)
 			-- If no record exists, the key is empty.

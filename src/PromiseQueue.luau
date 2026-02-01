@@ -42,8 +42,8 @@ type PromiseQueueImpl = {
 	_processQueue: (self: PromiseQueue) -> (),
 	_addResumableBlock: (queue: PromiseQueue) -> Promise.TPromise<() -> ()>,
 	_getLogContext: (self: PromiseQueue, item: QueueItem?) -> { [string]: any },
-	multiQueueAdd: (queues: { PromiseQueue }, callback: () -> ()) -> Promise.Promise,
-	add: (self: PromiseQueue, callback: () -> ()) -> Promise.Promise,
+	multiQueueAdd: (queues: { PromiseQueue }, callback: () -> Promise.Promise) -> Promise.Promise,
+	add: (self: PromiseQueue, callback: () -> (Promise.TPromise)) -> Promise.Promise,
 }
 
 --[=[
@@ -125,7 +125,7 @@ function PromiseQueue:add(callback: () -> ()): Promise.Promise
 		self._totalItemCount += 1
 
 		-- Create the queue item record.
-		local record = {
+		local record: QueueItem = {
 			id = self._totalItemCount,
 			fn = callback,
 			resolve = resolve,
@@ -233,7 +233,7 @@ local function addResumableBlock(queue: PromiseQueue): Promise.TPromise<() -> ()
 	return Promise.new(function(outerResolve)
 		-- Add an item whose function returns a promise...
 		queue:add(function()
-			return Promise.new(function(resume)
+            return Promise.new(function(resume)
 				-- ...that resolves the outer promise (`addResumableBlock`'s promise)
 				-- with the `resume` function needed to unblock this item.
 				outerResolve(resume :: any)
@@ -241,6 +241,7 @@ local function addResumableBlock(queue: PromiseQueue): Promise.TPromise<() -> ()
 		end)
 	end)
 end
+
 PromiseQueue._addResumableBlock = addResumableBlock -- Assign to the metatable for internal use.
 
 --[=[

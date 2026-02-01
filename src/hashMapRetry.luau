@@ -72,10 +72,10 @@ local RETRY_ERROR_CODES = {
 	@return RetryHandle<Promise<any>> -- A handle containing: `promise` (A Promise that resolves with the return value of `func` if it succeeds within `MAX_RETRIES` attempts) and `cancel` (A function that, when called, attempts to stop further retries and rejects the promise).
 	@error string -- Rejects if `func` fails with a non-retriable error, if it fails with a retriable error `MAX_RETRIES` times, or if `cancel()` is called.
 ]=]
-local function hashMapRetry(func: () -> any): Types.RetryHandle<Promise.TPromise<any>>
+local function hashMapRetry(func: () -> any): Types.RetryHandle
 	local cancel = false
 
-	local handle: Types.RetryHandle<Promise.TPromise<any>> = {
+	local handle: Types.RetryHandle = {
 		promise = Promise.new(function(resolve, reject)
 			local lastError
 			for i = 1, MAX_RETRIES do

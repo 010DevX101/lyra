@@ -71,7 +71,7 @@ local RETRY_ERROR_CODES = {
 	@return Promise<T> -- A Promise that resolves with the return value of `func` if it succeeds within `MAX_RETRIES` attempts.
 	@error string -- Rejects with the error message if `func` fails with a non-retriable error code, or if it fails with a retriable error code `MAX_RETRIES` times.
 ]=]
-local function dataStoreRetry<T>(func: () -> T): Promise.TPromise<T>
+local function dataStoreRetry(func: () -> (...any)): Promise.Promise
 	return Promise.new(function(resolve, reject)
 		local lastError -- Store the last retriable error encountered
 		for i = 1, MAX_RETRIES do
@@ -106,7 +106,7 @@ local function dataStoreRetry<T>(func: () -> T): Promise.TPromise<T>
 		end
 		-- If the loop completes, it means MAX_RETRIES were reached without success.
 		return reject(`DataStore error: too many retries ({MAX_RETRIES}). Last error: {lastError}`)
-	end) :: any
+	end)
 end
 
 return dataStoreRetry

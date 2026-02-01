@@ -35,7 +35,7 @@ local Migrations = require(script.Parent.Migrations)
 local PromiseQueue = require(script.Parent.PromiseQueue)
 local Promise = require(script.Parent.Promise)
 local Tables = require(script.Parent.Tables)
-local t = require(script.Parent.Parent.t)
+local gt = require(script.Parent.Parent.GreenTea)
 local Types = require(script.Parent.Types)
 local Transactions = require(script.Parent.Transactions)
 local dataStoreRetry = require(script.Parent.dataStoreRetry)
@@ -135,7 +135,7 @@ type SessionProps<T> = {
 	orphanedFiles: { Types.File },
 	currentFile: Types.File?,
 	queue: PromiseQueue.PromiseQueue,
-	txLockPromise: Promise.Promise?,
+	txLockPromise: Promise.TPromise?,
 	closed: boolean,
 	unloadPromise: Promise.Promise?,
 	keyInfo: DataStoreKeyInfo?,
@@ -145,10 +145,10 @@ type SessionProps<T> = {
 --[=[
 	Represents an active, locked session for a specific data key.
 
-	@type Session<T> typeof(setmetatable({} :: SessionProps<T>, {} :: SessionImpl<T>))
+	@type Session<T> setmetatable<SessionProps<T>, SessionImpl<T>>
 	@within Session
 ]=]
-export type Session<T> = typeof(setmetatable({} :: SessionProps<T>, {} :: SessionImpl<T>))
+export type Session<T> = setmetatable<SessionProps<T>, SessionImpl<T>>
 
 --[=[
 	Parameters for the static Session.load method.
@@ -166,10 +166,10 @@ type LoadSessionParams<T> = {
 	userIds: { number }?,
 }
 -- Runtime check for LoadSessionParams.
-local loadSessionParamsCheck = t.strictInterface({
-	key = t.string,
-	storeContext = t.any, -- StoreContext is a complex type, using `any` for simplicity
-	userIds = t.optional(t.array(t.number)),
+local loadSessionParamsCheck = gt.t.strictInterface({
+	key = gt.t.string,
+	storeContext = gt.t.any, -- StoreContext is a complex type, using `any` for simplicity
+	userIds = gt.t.optional(gt.t.array(gt.t.number)),
 })
 
 --[=[
@@ -240,7 +240,7 @@ local function load(params: LoadParams): Promise.TPromise<LoadResult>
 
 	-- 1. Get the main record
 	return dataStoreRetry(function()
-			return ctx.recordStore:GetAsync(key)
+            return ctx.recordStore:GetAsync(key) :: any
 		end)
 		:andThen(function(record: Types.DataStoreRecord?, _keyInfo: DataStoreKeyInfo?)
 			-- 2. Extract metadata
@@ -372,7 +372,7 @@ local function load(params: LoadParams): Promise.TPromise<LoadResult>
 		end)
 end
 
-local Session: SessionImpl<any> = {} :: SessionImpl<any>
+local Session = {} :: Session<any>
 Session.__index = Session
 
 --[=[
@@ -516,7 +516,7 @@ function Session.load<T>(params: LoadSessionParams<T>): Promise.TPromise<Session
 				session.closed = true
 				session:stopAutosaving()
 				-- Mark unload as immediately resolved if lock is lost
-				session.unloadPromise = Promise.resolve()
+				session.unloadPromise = Promise.resolve() :: Promise.Promise
 				-- Trigger Store's onLockLost callback if provided
 				if ctx.onLockLost then
 					ctx.onLockLost(params.key)
@@ -617,7 +617,7 @@ function Session:orphanFile(file: Types.File): ()
 		logger:log("debug", "sufficient budget, processing orphaned file")
 
 		-- Create promises to remove each shard
-		local promises = {}
+		local promises: { Promise.Promise } = {}
 		for i = 1, file.count do
 			logger:log("trace", `Queueing removal of shard {i} of {file.count}`)
 			table.insert(
@@ -635,7 +635,7 @@ function Session:orphanFile(file: Types.File): ()
 				logger:log("trace", "successfully removed all shards for orphaned file")
 				-- Remove the file from the session's orphaned list now that it's cleaned up.
 				for i, otherFile in self.orphanedFiles do
-					if Tables.equalsDeep(file, otherFile) then
+					if Tables.equalsDeep(file :: any, otherFile :: any) then
 						table.remove(self.orphanedFiles, i)
 						break
 					end
@@ -892,8 +892,7 @@ function Session:unload(): Promise.Promise
 
 	logger:log("trace", "queueing final save and lock release")
 	-- Add the final operations to the session's queue to ensure serialization
-	self.unloadPromise = self
-		.queue
+	self.unloadPromise = self.queue
 		:add(function()
 			-- Perform a final save attempt if there are changes
 			logger:log("trace", "performing final updateRecord before unloading")
@@ -916,15 +915,15 @@ end
 	Gets the current data for the session. Value returned is deep frozen to prevent modification.
 
 	@within Session
-	@return Promise<T> -- Resolves immediately with the data.
+	@return T
 ]=]
 function Session:get<T>(): Promise.TPromise<T>
-	return Promise.resolve(self.data) :: any
+	return Promise.resolve(self.data)
 end
 
 -- Internal function to encapsulate shared logic for update and updateImmutable.
-local function updateInternal(
-	self: Session<any>,
+local function updateInternal<T>(
+	self: Session<T>,
 	transformFunction: (data: any) -> any | false,
 	immutable: boolean,
 	logger: Log.Logger
@@ -934,7 +933,10 @@ local function updateInternal(
 		-- Wait if a multi-key transaction is currently holding the lock on this session
 		while self.txLockPromise ~= nil do
 			logger:log("trace", "waiting for txLockPromise to resolve")
-			self.txLockPromise:await()
+            local lock = self.txLockPromise
+            if lock ~= nil then
+                lock:await()
+            end
 			-- Re-check if closed after waiting, as lock loss could occur during tx
 			if self.closed then
 				logger:log("warn", "Session closed while waiting for txLockPromise, rejecting update")
@@ -1037,7 +1039,7 @@ end
 	@error "Store:update schema validation failed: ..." -- If the modified data fails schema validation.
 ]=]
 function Session:update<T>(transformFunction: (data: T) -> boolean): Promise.TPromise<boolean>
-	assert(t.callback(transformFunction))
+	assert(gt.t.callback(transformFunction))
 
 	local logger = self.logger:extend({ method = "update" })
 	logger:log("trace", "update called")
@@ -1066,7 +1068,7 @@ end
 	@error "Store:update schema validation failed: ..." -- If the modified data fails schema validation.
 ]=]
 function Session:updateImmutable<T>(transformFunction: (data: T) -> T | false): Promise.TPromise<boolean>
-	assert(t.callback(transformFunction))
+	assert(gt.t.callback(transformFunction))
 
 	local logger = self.logger:extend({ method = "updateImmutable" })
 	logger:log("trace", "updateImmutable called")

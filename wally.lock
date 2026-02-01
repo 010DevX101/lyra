@@ -3,6 +3,11 @@
 registry = "test"
 
 [[package]]
+name = "corecii/greentea"
+version = "0.4.11"
+dependencies = []
+
+[[package]]
 name = "evaera/promise"
 version = "4.0.0"
 dependencies = []
@@ -248,11 +253,6 @@ version = "1.2.6"
 dependencies = [["collections", "jsdotlua/collections@1.2.6"]]
 
 [[package]]
-name = "osyrisrblx/t"
-version = "3.1.1"
-dependencies = []
-
-[[package]]
 name = "paradoxum-games/lyra"
-version = "0.6.0"
-dependencies = [["Promise", "evaera/promise@4.0.0"], ["t", "osyrisrblx/t@3.1.1"], ["Jest", "jsdotlua/jest@3.10.0"], ["JestGlobals", "jsdotlua/jest-globals@3.10.0"]]
+version = "0.6.1"
+dependencies = [["GreenTea", "corecii/greentea@0.4.11"], ["Promise", "evaera/promise@4.0.0"], ["Jest", "jsdotlua/jest@3.10.0"], ["JestGlobals", "jsdotlua/jest-globals@3.10.0"]]

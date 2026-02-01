@@ -17,7 +17,7 @@ local function copyDeep<T>(t: T): T
 	return new :: any
 end
 
-local function mergeDeep<T>(...: any): T
+local function mergeDeep<T>(...: T): T
 	local result = {}
 
 	for tIndex = 1, select("#", ...) do
@@ -43,7 +43,7 @@ local function mergeDeep<T>(...: any): T
 		end
 	end
 
-	return result :: any
+	return result
 end
 
 local function mergeShallow<T>(...: any): T

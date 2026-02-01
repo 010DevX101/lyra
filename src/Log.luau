@@ -126,7 +126,15 @@ Logger.__index = Logger
 ]=]
 function Logger:log(level: LogLevel, message: string, context: { [string]: any }?)
 	-- Filter messages based on the global log level.
-	if table.find(levels, level) > table.find(levels, Log.level) then
+    local defaultLevelIndex = table.find(levels, Log.level)
+    if not defaultLevelIndex then
+        return
+    end
+    local levelIndex = table.find(levels, level)
+    if not levelIndex then
+        return
+    end
+	if levelIndex > defaultLevelIndex then
 		return
 	end
 

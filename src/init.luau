@@ -11,6 +11,16 @@
 local Log = require(script.Log)
 local Migrations = require(script.Migrations)
 local PlayerStore = require(script.PlayerStore)
+local Store = require(script.Store)
+local Types = require(script.Types)
+
+export type PlayerStoreConfig<T> = PlayerStore.PlayerStoreConfig<T>
+export type PlayerStore<T> = PlayerStore.PlayerStore<T>
+
+export type StoreConfig<T> = Store.StoreConfig<T>
+export type Store<T> = Store.Store<T>
+
+export type StoreContext<T> = Types.StoreContext<T>
 
 --[=[
 	Provides helper functions for creating common migration steps.
@@ -36,6 +46,8 @@ local MigrationStep = {
 ]=]
 local createPlayerStore = PlayerStore.createPlayerStore
 
+local createStore = Store.createStore
+
 --[=[
 	Sets the global minimum log level for all Lyra loggers.
 
@@ -50,4 +62,5 @@ return {
 	MigrationStep = MigrationStep,
 	createPlayerStore = createPlayerStore,
 	setLogLevel = setLogLevel,
+    createStore = createStore
 }

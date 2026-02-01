@@ -6,7 +6,8 @@
 ]=]
 
 local Log = require(script.Parent.Log)
-local t = require(script.Parent.Parent.t)
+local gt = require(script.Parent.Parent.GreenTea)
+local Promise = require(script.Parent.Promise)
 
 --[=[
 	Represents a single operation within a JSON Patch array.
@@ -18,10 +19,11 @@ local t = require(script.Parent.Parent.t)
 	.path string -- A JSON Pointer string indicating the target location.
 	.value any? -- The value to add or replace (used for "add" and "replace"). Optional for "remove".
 ]=]
-export type PatchOperation =
-	{ op: "add", path: string, value: any }
-	| { op: "replace", path: string, value: any }
-	| { op: "remove", path: string }
+export type PatchOperation = {
+    op: "add" | "replace" | "remove",
+    path: string,
+    value: any?
+}
 
 --[=[
 	An array of PatchOperation objects representing the changes made during a transaction.
@@ -147,13 +149,13 @@ export type StoreContext<T> = {
 	lockHashMap: DataStore | MemoryStoreHashMap,
 }
 
--- Validation check for TxInfo structure using 't' library.
-local txInfoCheck = t.some(
-	t.strictInterface({ committedData = t.any }),
-	t.strictInterface({ committedData = t.any, txId = t.string, txPatch = t.any })
+-- Validation check for TxInfo structure using 'GreenTea' library.
+local txInfoCheck = gt.t.some(
+	gt.t.strictInterface({ committedData = gt.t.any }),
+	gt.t.strictInterface({ committedData = gt.t.any, txId = gt.t.string, txPatch = gt.t.any })
 )
--- Validation check for File structure using 't' library.
-local fileCheck = t.some(t.strictInterface({ data = t.any }), t.strictInterface({ shard = t.string, count = t.number }))
+-- Validation check for File structure using 'GreenTea' library.
+local fileCheck = gt.t.some(gt.t.strictInterface({ data = gt.t.any }), gt.t.strictInterface({ shard = gt.t.string, count = gt.t.number }))
 
 --[=[
 	A handle returned by retry utility functions like `hashMapRetry`.
@@ -168,8 +170,8 @@ local fileCheck = t.some(t.strictInterface({ data = t.any }), t.strictInterface(
 	.promise T -- The Promise representing the asynchronous operation being retried. This promise resolves or rejects based on the outcome of the operation after retries.
 	.cancel () -> () -- A function that can be called to signal cancellation. If called, the retry mechanism will stop further attempts and reject the `promise`.
 ]=]
-export type RetryHandle<T> = {
-	promise: T,
+export type RetryHandle = {
+	promise: Promise.Promise,
 	cancel: () -> (),
 }
 

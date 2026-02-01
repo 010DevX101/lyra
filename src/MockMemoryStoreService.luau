@@ -3,11 +3,70 @@ local HttpService = game:GetService("HttpService")
 local Tables = require(script.Parent.Tables)
 
 local MAX_QUEUE_SIZE = 30
-local RATE_LIMITS = {
+local RATE_LIMITS: RateLimits = {
 	GetAsync = { Base = 100, PlayerMultiplier = 10 },
 	SetAsync = { Base = 100, PlayerMultiplier = 10 },
 	UpdateAsync = { Base = 100, PlayerMultiplier = 10 },
 	RemoveAsync = { Base = 100, PlayerMultiplier = 10 },
+}
+
+type MockMemoryStoreService = {
+    hashMaps: {[string]: any},
+	mockData: {
+        [string]: {
+            [string]: Entry
+        }
+    },
+	requestQueues: {
+        [RequestType]: {(() -> ()) | boolean}
+	},
+	queuedErrors: {
+		[RequestType]: {string},
+	},
+    mockHashMapMeta: MockHashMapMeta,
+	_globalLatency: number?,
+	_latencyByRequestType: {[RequestType]: number},
+	_randomLatencyRange: {min: number, max: number}?,
+	_errorRates: {[RequestType]: number},
+	_simulateThrottling: boolean,
+	_simulateTimeout: boolean,
+	_customBudgets: {[RequestType]: number},
+	_forcedThrottles: {
+        [RequestType]: {
+            endTime: number
+        }
+    },
+
+    GetDataStore: (self: MemoryStoreService, datastoreName: string, scope: string?) -> (MockHashMap),
+    GetRequestBudgetForRequestType: (self: MemoryStoreService, requestType: Enum.DataStoreRequestType) -> (number)
+}
+
+type MockHashMap = setmetatable<{
+    name: string,
+    service: MockMemoryStoreService
+}, MockHashMapMeta>
+
+type MockHashMapMeta = {
+    GetAsync: (self: MockHashMap, key: string) -> any?,
+    SetAsync: (self: MockHashMap, key: string, value: any, expiration: number) -> boolean,
+    UpdateAsync: (self: MockHashMap, key: string, transformFunction: (value: any) -> any, expiration: number) -> (...any),
+    RemoveAsync: (self: MockHashMap, key: string) -> (),
+
+    __index: MockHashMapMeta
+}
+
+type Entry = {
+    expiration: number,
+    value: any
+}
+
+type RequestType = keyof<typeof(RATE_LIMITS)>
+
+type RateLimits = {
+    [string]: {
+        Base: number,
+        PlayerMultiplier: number
+    }
 }
 
 local MAX_KEY_LENGTH = 128
@@ -19,7 +78,7 @@ local function getNow()
 	return DateTime.now().UnixTimestampMillis
 end
 
-local function getLatencyForRequest(service: any, requestType: string): number
+local function getLatencyForRequest(service: MockMemoryStoreService, requestType: RequestType): number
 	if service._latencyByRequestType[requestType] then
 		return service._latencyByRequestType[requestType]
 	end
@@ -33,7 +92,7 @@ local function getLatencyForRequest(service: any, requestType: string): number
 	return service._globalLatency or 0.1
 end
 
-local function shouldSimulateError(service: any, requestType: string): (boolean, string?)
+local function shouldSimulateError(service: MockMemoryStoreService, requestType: RequestType): (boolean, string?)
 	if #service.queuedErrors[requestType] > 0 then
 		return true, table.remove(service.queuedErrors[requestType], 1)
 	end
@@ -53,14 +112,14 @@ local function shouldSimulateError(service: any, requestType: string): (boolean,
 	return false, nil
 end
 
-local function doLatency(service: any, requestType: string)
+local function doLatency(service: MockMemoryStoreService, requestType: RequestType)
 	local latency = getLatencyForRequest(service, requestType)
 	if latency > 0 then
 		task.wait(latency)
 	end
 end
 
-local function doRateLimitAndQueue(service: any, requestType: string)
+local function doRateLimitAndQueue(service: MockMemoryStoreService, requestType: RequestType)
 	local queue = service.requestQueues[requestType]
 	local limitData = RATE_LIMITS[requestType]
 	local budget = service._customBudgets[requestType]
@@ -142,7 +201,7 @@ local function enforceExpirationLimits(expiration: number)
 	end
 end
 
-local function getScopedData(self: any)
+local function getScopedData(self: MockHashMap): {[string]: Entry}
 	local hashMap = self.service.mockData[self.name]
 	if not hashMap then
 		hashMap = {}
@@ -151,7 +210,7 @@ local function getScopedData(self: any)
 	return hashMap
 end
 
-local function isExpired(entry: any): boolean
+local function isExpired(entry: Entry): boolean
 	if not entry or not entry.expiration then
 		return true
 	end
@@ -164,7 +223,7 @@ end
 
 local MockHashMap = {}
 
-function MockHashMap:GetAsync(key: string): any?
+function MockHashMap.GetAsync(self: MockHashMap, key: string): any?
 	enforceKeyLimits(key)
 
 	doRateLimitAndQueue(self.service, "GetAsync")
@@ -180,7 +239,7 @@ function MockHashMap:GetAsync(key: string): any?
 	return entry.value
 end
 
-function MockHashMap:SetAsync(key: string, value: any, expiration: number): boolean
+function MockHashMap.SetAsync(self: MockHashMap, key: string, value: any, expiration: number): boolean
 	value = sanitize(value)
 	enforceKeyLimits(key)
 	enforceValueLimits(value)
@@ -190,7 +249,7 @@ function MockHashMap:SetAsync(key: string, value: any, expiration: number): bool
 
 	local scopedData = getScopedData(self)
 	local serialized = HttpService:JSONEncode(value)
-	if serialized == nil then
+	if not serialized then
 		return false
 	end
 
@@ -202,7 +261,7 @@ function MockHashMap:SetAsync(key: string, value: any, expiration: number): bool
 	return true
 end
 
-function MockHashMap:UpdateAsync(key: string, transformFunction: (any?) -> any?, expiration: number): any?
+function MockHashMap.UpdateAsync(self: MockHashMap, key: string, transformFunction: (value: any) -> any?, expiration: number): any?
 	enforceKeyLimits(key)
 	enforceExpirationLimits(expiration)
 
@@ -250,7 +309,7 @@ function MockHashMap:UpdateAsync(key: string, transformFunction: (any?) -> any?,
 	error("UpdateConflict: Exceeded max number of retries", 0)
 end
 
-function MockHashMap:RemoveAsync(key: string)
+function MockHashMap.RemoveAsync(self: MockHashMap, key: string)
 	enforceKeyLimits(key)
 
 	doRateLimitAndQueue(self.service, "RemoveAsync")
@@ -259,14 +318,14 @@ function MockHashMap:RemoveAsync(key: string)
 	scopedData[key] = nil
 end
 
-local function createMockHashMap(service: any, name: string): any
+local function createMockHashMap(service: MockMemoryStoreService, name: string): MockHashMap
 	return setmetatable({
 		service = service,
 		name = name,
-	}, { __index = service.mockHashMapMeta })
+	}, service.mockHashMapMeta)
 end
 
-local function new(): MemoryStoreService
+local function new()
 	local mockHashMapMeta = table.clone(MockHashMap)
 	mockHashMapMeta.__index = mockHashMapMeta
 
@@ -297,7 +356,7 @@ local function new(): MemoryStoreService
 		_forcedThrottles = {},
 	}
 
-	tbl.GetHashMap = function(self, name: string): any
+	tbl.GetHashMap = function(self: MockMemoryStoreService, name: string): any
 		if not self.hashMaps[name] then
 			self.hashMaps[name] = createMockHashMap(self, name)
 		end

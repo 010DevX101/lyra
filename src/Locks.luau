@@ -96,7 +96,7 @@ local function acquireLock(params: AcquireLockParams): Promise.TPromise<LockHand
 	-- Handle for the `task.delay` used to trigger expiry callbacks locally.
 	local expiryThread: thread? = nil
 	-- Promise representing the background refresh loop.
-	local refreshPromise: Promise.Promise? = nil
+	local refreshPromise: Promise.TPromise? = nil
 
 	-- Current state of the lock.
 	local status: LockStatus
@@ -152,7 +152,7 @@ local function acquireLock(params: AcquireLockParams): Promise.TPromise<LockHand
 		@within Locks
 		@private
 	]=]
-	local function tryUpdate(ttl: number): Types.RetryHandle<Promise.TPromise<any>>
+	local function tryUpdate(ttl: number): Types.RetryHandle
 		logger:log("trace", `attempting UpdateAsync on key '{key}' with ttl {ttl}`)
 
 		-- Transform function for atomic update
@@ -180,7 +180,7 @@ local function acquireLock(params: AcquireLockParams): Promise.TPromise<LockHand
 		end
 
 		-- Wrap the MemoryStore call in retry logic
-		local retryHandle: Types.RetryHandle<Promise.TPromise<any>>
+		local retryHandle: Types.RetryHandle
 
 		if ctx.useDSSLocking then
 			local retryPromise = dataStoreRetry(function()
@@ -288,7 +288,7 @@ local function acquireLock(params: AcquireLockParams): Promise.TPromise<LockHand
 		transitionTo("acquiring")
 
 		local acquisitionStartTime = os.clock()
-		local currentRetryHandle: Types.RetryHandle<Promise.TPromise<any>>? = nil
+		local currentRetryHandle: Types.RetryHandle? = nil
 		local attemptCount = 0
 		local maxAcquisitionTime = params.duration -- Use lock duration as acquisition timeout
 
@@ -375,11 +375,10 @@ local function acquireLock(params: AcquireLockParams): Promise.TPromise<LockHand
 	local function setupLockRefresh(): ()
 		logger:log("trace", "setting up background lock refresh loop")
 
-		local currentRefreshHandle: Types.RetryHandle<Promise.TPromise<any>>? = nil
+		local currentRefreshHandle: Types.RetryHandle? = nil
 
-		-- Create a promise representing the refresh loop's lifetime.
-		refreshPromise = Promise.new(function(resolveLoop, _, onCancelLoop)
-			-- Setup cancellation for the refresh loop promise itself.
+        refreshPromise = Promise.new(function(resolveLoop: (...any) -> (), _, onCancelLoop: (abortHandler: () -> ()?) -> boolean)
+            -- Setup cancellation for the refresh loop promise itself.
 			onCancelLoop(function()
 				logger:log("trace", "refreshPromise cancelled")
 				-- If a refresh attempt is in progress, cancel its retry handle.
@@ -430,7 +429,7 @@ local function acquireLock(params: AcquireLockParams): Promise.TPromise<LockHand
 				logger:log("trace", "background refresh loop finished")
 				resolveLoop() -- Resolve the main refreshPromise.
 			end)
-		end)
+        end)
 	end
 
 	-- Construct the LockHandle object to be returned.

@@ -192,7 +192,7 @@ local function read(params: ReadParams): Promise.TPromise<any>
 	local shardCount = params.file.count
 	assert(shardCount, "Shard count missing from large file object")
 
-	local promises = {}
+	local promises: { Promise.Promise } = {}
 
 	-- Step 3: Create promises to fetch each shard.
 	for i = 1, shardCount do
@@ -200,12 +200,11 @@ local function read(params: ReadParams): Promise.TPromise<any>
 		table.insert(
 			promises,
 			dataStoreRetry(function()
-				-- Attempt to read the individual shard with retry logic.
+                -- Attempt to read the individual shard with retry logic.
 				return params.store:GetAsync(shardKey)
 			end)
 		)
 	end
-
 	-- Step 4: Wait for all shard reads to complete.
 	return Promise.all(promises):andThen(function(shards)
 		-- Step 5: Validate that all shards were retrieved.
