@@ -13,6 +13,8 @@ local Migrations = require(script.Migrations)
 local PlayerStore = require(script.PlayerStore)
 local Store = require(script.Store)
 local Types = require(script.Types)
+local MockDataStoreService = require(script.MockDataStoreService)
+local MockMemoryStoreService = require(script.MockMemoryStoreService)
 
 export type PlayerStoreConfig<T> = PlayerStore.PlayerStoreConfig<T>
 export type PlayerStore<T> = PlayerStore.PlayerStore<T>
@@ -62,5 +64,7 @@ return {
 	MigrationStep = MigrationStep,
 	createPlayerStore = createPlayerStore,
 	setLogLevel = setLogLevel,
-    createStore = createStore
+    createStore = createStore,
+    MockDataStoreService = MockDataStoreService,
+    MockMemoryStoreService = MockMemoryStoreService
 }
