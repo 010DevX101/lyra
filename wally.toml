@@ -1,7 +1,7 @@
 [package]
 name = "010devx101/lyra"
 description = "Advanced player data management with a simple API. Updated to the new solver, exposed types and useful functions that used to be private"
-version = "0.6.1"
+version = "0.6.1-patch.2"
 license = "MIT"
 authors = ["nomer888", "outofbears"]
 realm = "shared"
